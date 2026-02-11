@@ -1,0 +1,47 @@
+# GPU-accelerated training image for SudokuNet.
+#
+# Uses CUDA 12.4 runtime for RTX 40-series GPUs.
+# Requires NVIDIA Container Toolkit on the host.
+#
+# Build:
+#   docker build -f Dockerfile.train -t sudoku-ocr-train .
+#
+# Run (GPU):
+#   docker run --rm --gpus all \
+#     -v ./data:/app/data \
+#     -v ./src/sudoku_ocr/weights:/app/src/sudoku_ocr/weights \
+#     sudoku-ocr-train
+#
+# The volume mounts ensure:
+#   - data/  is reused across runs (MNIST download + generated digits)
+#   - weights/ are written back to your project so the app can use them
+
+FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04
+
+# Avoid interactive prompts during package install
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Python + fonts
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 python3-pip python3-venv \
+    fonts-liberation fonts-dejavu-core fonts-freefont-ttf \
+    && rm -rf /var/lib/apt/lists/*
+
+# Use python3 as default
+RUN ln -sf /usr/bin/python3 /usr/bin/python
+
+WORKDIR /app
+
+COPY requirements.txt .
+# Install CUDA-enabled PyTorch (cu124 matches the base image CUDA version)
+RUN pip install --no-cache-dir \
+    -r requirements.txt \
+    --extra-index-url https://download.pytorch.org/whl/cu124
+
+COPY src/ src/
+COPY scripts/ scripts/
+COPY pyproject.toml .
+
+RUN pip install --no-cache-dir -e .
+
+CMD ["python", "scripts/train_pipeline.py"]
