@@ -44,6 +44,7 @@ Then run directly:
 
 from __future__ import annotations
 
+import math
 import random
 import time
 from pathlib import Path
@@ -52,7 +53,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
-from torch.utils.data import ConcatDataset, DataLoader
+from torch.utils.data import ConcatDataset, DataLoader, TensorDataset
 from torchvision import datasets, transforms
 
 from sudoku_ocr.model import _SudokuNetCNN
@@ -65,7 +66,8 @@ BATCH_SIZE_GPU = 512  # 4080 has 16GB — this model is tiny, go big
 EPOCHS = 15
 LR = 1e-3
 DATA_DIR = Path("data")
-PRINTED_DIR = DATA_DIR / "printed_digits"
+PRINTED_PT = DATA_DIR / "printed_digits.pt"
+PREVIEW_DIR = DATA_DIR / "printed_digits_preview"
 WEIGHTS_PATH = Path("src/sudoku_ocr/weights/digit_classifier.pt")
 TARGET_PER_DIGIT = 2000
 CANVAS_SIZE = 28
@@ -188,14 +190,29 @@ def render_digit(
     return canvas
 
 
+def save_preview(images: list[np.ndarray], digit: int) -> None:
+    """Save a grid preview of all generated images for one digit."""
+    n = len(images)
+    cols = math.isqrt(n)
+    rows = math.ceil(n / cols)
+    grid = np.zeros((rows * CANVAS_SIZE, cols * CANVAS_SIZE), dtype=np.uint8)
+    for i, img in enumerate(images):
+        r, c = divmod(i, cols)
+        grid[r * CANVAS_SIZE:(r + 1) * CANVAS_SIZE,
+             c * CANVAS_SIZE:(c + 1) * CANVAS_SIZE] = img
+    PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
+    Image.fromarray(grid).save(PREVIEW_DIR / f"{digit}.png")
+
+
 # ---------------------------------------------------------------------------
-# Step 1: Generate printed digits
+# Step 1: Generate printed digits → single .pt file + preview PNGs
 # ---------------------------------------------------------------------------
 def generate_printed_digits() -> None:
-    if PRINTED_DIR.exists() and any(PRINTED_DIR.iterdir()):
-        count = sum(1 for _ in PRINTED_DIR.rglob("*.png"))
-        print(f"[generate] {PRINTED_DIR} already exists with {count} images, skipping.")
-        print(f"[generate] Delete {PRINTED_DIR} to regenerate.")
+    if PRINTED_PT.exists():
+        data = torch.load(PRINTED_PT, weights_only=True)
+        print(f"[generate] {PRINTED_PT} already exists "
+              f"({data['images'].shape[0]} images), skipping.")
+        print(f"[generate] Delete {PRINTED_PT} to regenerate.")
         return
 
     fonts = find_fonts()
@@ -207,13 +224,13 @@ def generate_printed_digits() -> None:
     random.seed(42)
     np.random.seed(42)
 
+    all_images: list[np.ndarray] = []
+    all_labels: list[int] = []
+
     t0 = time.time()
-    total = 0
     for digit in range(0, 10):
-        digit_dir = PRINTED_DIR / str(digit)
-        digit_dir.mkdir(parents=True, exist_ok=True)
-        count = 0
-        while count < TARGET_PER_DIGIT:
+        digit_images: list[np.ndarray] = []
+        while len(digit_images) < TARGET_PER_DIGIT:
             img = render_digit(
                 digit,
                 font_path=random.choice(fonts),
@@ -226,10 +243,22 @@ def generate_printed_digits() -> None:
             )
             if img.sum() < 200:
                 continue
-            Image.fromarray(img).save(digit_dir / f"{count:05d}.png")
-            count += 1
-        total += count
-    print(f"[generate] Done: {total} images in {time.time() - t0:.1f}s")
+            digit_images.append(img)
+
+        save_preview(digit_images, digit)
+        all_images.extend(digit_images)
+        all_labels.extend([digit] * len(digit_images))
+
+    # Save as single .pt: float32 tensors normalized to [0, 1]
+    images_t = torch.from_numpy(np.array(all_images)).float() / 255.0  # (N, 28, 28)
+    images_t = images_t.unsqueeze(1)  # (N, 1, 28, 28)
+    labels_t = torch.tensor(all_labels, dtype=torch.long)
+
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    torch.save({"images": images_t, "labels": labels_t}, PRINTED_PT)
+    print(f"[generate] Done: {len(all_labels)} images in {time.time() - t0:.1f}s")
+    print(f"[generate] Saved to {PRINTED_PT} ({PRINTED_PT.stat().st_size / 1024 / 1024:.1f}MB)")
+    print(f"[generate] Previews in {PREVIEW_DIR}/")
 
 
 # ---------------------------------------------------------------------------
@@ -252,7 +281,7 @@ def train() -> None:
     use_cuda = torch.cuda.is_available()
     device = torch.device("cuda" if use_cuda else "cpu")
     if use_cuda:
-        torch.backends.cudnn.benchmark = True  # autotuner for conv algorithms
+        torch.backends.cudnn.benchmark = True
         props = torch.cuda.get_device_properties(0)
         vram = getattr(props, 'total_memory', 0) or getattr(props, 'total_mem', 0)
         print(f"[train] CUDA: {torch.cuda.get_device_name(0)} ({vram / 1024**3:.0f}GB)")
@@ -260,23 +289,24 @@ def train() -> None:
         print("[train] WARNING: No CUDA — training on CPU (will be slow)")
 
     batch_size = BATCH_SIZE_GPU if use_cuda else BATCH_SIZE_CPU
-    # Workers: 4 is a good default; on Windows > 0 requires if __name__ guard (we have it)
     num_workers = 4 if use_cuda else 0
     print(f"[train] batch_size={batch_size}, num_workers={num_workers}, epochs={EPOCHS}")
 
-    transform = transforms.Compose([
-        transforms.Grayscale(num_output_channels=1),
-        transforms.Resize((28, 28)),
-        transforms.ToTensor(),
-    ])
+    # MNIST uses ToTensor which gives (1, 28, 28) float32 in [0, 1]
+    # target_transform ensures labels are tensors (matching TensorDataset)
+    mnist_transform = transforms.Compose([transforms.ToTensor()])
+    target_transform = lambda y: torch.tensor(y, dtype=torch.long)
 
     # --- Datasets ---
-    mnist_train = datasets.MNIST(DATA_DIR, train=True, download=True, transform=transform)
-    mnist_test = datasets.MNIST(DATA_DIR, train=False, download=True, transform=transform)
+    mnist_train = datasets.MNIST(DATA_DIR, train=True, download=True,
+                                 transform=mnist_transform, target_transform=target_transform)
+    mnist_test = datasets.MNIST(DATA_DIR, train=False, download=True,
+                                transform=mnist_transform, target_transform=target_transform)
 
     printed_train = None
-    if PRINTED_DIR.exists():
-        printed_train = datasets.ImageFolder(str(PRINTED_DIR), transform=transform)
+    if PRINTED_PT.exists():
+        data = torch.load(PRINTED_PT, weights_only=True)
+        printed_train = TensorDataset(data["images"], data["labels"])
         print(f"[train] Printed digits: {len(printed_train)} images")
 
     if printed_train is not None:
@@ -288,9 +318,9 @@ def train() -> None:
 
     loader_kwargs = dict(
         batch_size=batch_size,
-        pin_memory=use_cuda,      # pre-stage batches in pinned (page-locked) memory for fast GPU transfer
-        num_workers=num_workers,   # parallel data loading processes
-        persistent_workers=num_workers > 0,  # keep workers alive between epochs
+        pin_memory=use_cuda,
+        num_workers=num_workers,
+        persistent_workers=num_workers > 0,
     )
     train_loader = DataLoader(train_data, shuffle=True, **loader_kwargs)
     mnist_test_loader = DataLoader(mnist_test, **loader_kwargs)
@@ -305,7 +335,6 @@ def train() -> None:
     )
 
     # Mixed precision: float16 forward/backward, float32 weight updates
-    # Big speedup on Ampere+ GPUs (RTX 30xx/40xx) with tensor cores
     use_amp = use_cuda
     scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
 
@@ -320,7 +349,7 @@ def train() -> None:
             images = images.to(device, non_blocking=True)
             labels = labels.to(device, non_blocking=True)
 
-            optimizer.zero_grad(set_to_none=True)  # slightly faster than zero_grad()
+            optimizer.zero_grad(set_to_none=True)
 
             with torch.amp.autocast("cuda", enabled=use_amp):
                 output = model(images)

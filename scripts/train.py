@@ -4,7 +4,7 @@ from pathlib import Path
 
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader, ConcatDataset
+from torch.utils.data import ConcatDataset, DataLoader, TensorDataset
 from torchvision import datasets, transforms
 
 from sudoku_ocr.model import _SudokuNetCNN
@@ -13,7 +13,7 @@ BATCH_SIZE = 128
 EPOCHS = 15
 LR = 1e-3
 DATA_DIR = Path("data")
-PRINTED_DIR = DATA_DIR / "printed_digits"
+PRINTED_PT = DATA_DIR / "printed_digits.pt"
 WEIGHTS_PATH = Path("src/sudoku_ocr/weights/digit_classifier.pt")
 
 
@@ -35,23 +35,23 @@ def main() -> None:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Training on {device}")
 
-    transform = transforms.Compose([
-        transforms.Grayscale(num_output_channels=1),
-        transforms.Resize((28, 28)),
-        transforms.ToTensor(),
-    ])
+    transform = transforms.Compose([transforms.ToTensor()])
+    target_transform = lambda y: torch.tensor(y, dtype=torch.long)
 
     # MNIST dataset
-    mnist_train = datasets.MNIST(DATA_DIR, train=True, download=True, transform=transform)
-    mnist_test = datasets.MNIST(DATA_DIR, train=False, download=True, transform=transform)
+    mnist_train = datasets.MNIST(DATA_DIR, train=True, download=True,
+                                 transform=transform, target_transform=target_transform)
+    mnist_test = datasets.MNIST(DATA_DIR, train=False, download=True,
+                                transform=transform, target_transform=target_transform)
 
     # Synthetic printed digits (if available)
     printed_train = None
-    if PRINTED_DIR.exists():
-        printed_train = datasets.ImageFolder(str(PRINTED_DIR), transform=transform)
-        print(f"Printed digits: {len(printed_train)} images from {PRINTED_DIR}")
+    if PRINTED_PT.exists():
+        data = torch.load(PRINTED_PT, weights_only=True)
+        printed_train = TensorDataset(data["images"], data["labels"])
+        print(f"Printed digits: {len(printed_train)} images from {PRINTED_PT}")
     else:
-        print(f"WARNING: {PRINTED_DIR} not found — training on MNIST only")
+        print(f"WARNING: {PRINTED_PT} not found — training on MNIST only")
 
     # Combine datasets
     if printed_train is not None:
