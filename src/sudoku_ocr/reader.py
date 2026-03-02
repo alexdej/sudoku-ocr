@@ -70,6 +70,22 @@ class PuzzleReader:
 
         return color_warped, cells
 
+    def read_digits_string(
+        self, image: ImageSource, grid_size: int | None = None,
+    ) -> str:
+        """Read puzzle digits as a compact string.
+
+        Args:
+            image: A file path or PIL Image of a sudoku puzzle.
+            grid_size: Number of rows/columns, or None to auto-detect.
+
+        Returns:
+            A string of length grid_size² with digits and '.' for empty cells.
+            E.g. "83.469.5.549.876.3..."
+        """
+        digits = self.read_digits(image, grid_size)
+        return "".join(str(d) if d is not None else "." for d in digits)
+
     def read_digits(
         self, image: ImageSource, grid_size: int | None = None,
     ) -> list[int | None]:

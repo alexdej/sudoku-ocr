@@ -8,7 +8,7 @@ import numpy as np
 from sudoku_ocr.grid import detect_grid, _extract_lines, _count_lines
 
 
-SAMPLES_DIR = Path("samples")
+SAMPLES_DIR = Path("samples/screenshots")
 
 
 def debug_image(path: Path) -> None:

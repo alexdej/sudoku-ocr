@@ -8,7 +8,7 @@ import numpy as np
 from sudoku_ocr.grid import _find_grid_contour, _find_grid_hough, _order_corners
 
 
-SAMPLES_DIR = Path("samples")
+SAMPLES_DIR = Path("samples/screenshots")
 TARGETS = ["images.png", "hq720.jpg"]
 
 

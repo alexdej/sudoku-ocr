@@ -8,7 +8,7 @@ from sudoku_ocr import PuzzleReader, draw_overlay
 from sudoku_ocr.model import SudokuNet
 
 
-SAMPLES_DIR = Path("samples")
+SAMPLES_DIR = Path("samples/screenshots")
 OUTPUT_DIR = Path("output")
 WEIGHTS_PATH = Path("src/sudoku_ocr/weights/digit_classifier.pt")
 

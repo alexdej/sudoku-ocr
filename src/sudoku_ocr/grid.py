@@ -241,6 +241,11 @@ def detect_grid_size(gray_warped: np.ndarray) -> int:
     return best_size
 
 
+# Minimum size (shorter side in pixels) before upscaling is applied.
+# Small images produce blobs in adaptive threshold and lose thin grid lines.
+_MIN_IMAGE_DIM = 300
+
+
 def detect_grid(image: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Detect the sudoku grid and return perspective-corrected images.
 
@@ -254,6 +259,11 @@ def detect_grid(image: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     Raises:
         ValueError: If no grid could be detected in the image.
     """
+    h, w = image.shape[:2]
+    if min(h, w) < _MIN_IMAGE_DIM:
+        scale = _MIN_IMAGE_DIM / min(h, w)
+        image = cv2.resize(image, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_CUBIC)
+
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     blurred = cv2.GaussianBlur(gray, (7, 7), 3)
     thresh = cv2.adaptiveThreshold(

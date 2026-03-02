@@ -1,4 +1,4 @@
-"""Generate synthetic printed digits + train SudokuNet on MNIST + printed data.
+"""Generate synthetic printed digits + train SudokuNet on printed data only.
 
 Combines digit generation and training in one script. Optimized for GPU
 with mixed precision, parallel data loading, and larger batches.
@@ -53,8 +53,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
-from torch.utils.data import ConcatDataset, DataLoader, TensorDataset
-from torchvision import datasets, transforms
+from torch.utils.data import DataLoader, TensorDataset
 
 from sudoku_ocr.model import _SudokuNetCNN
 
@@ -69,7 +68,7 @@ DATA_DIR = Path("data")
 PRINTED_PT = DATA_DIR / "printed_digits.pt"
 PREVIEW_DIR = DATA_DIR / "printed_digits_preview"
 WEIGHTS_PATH = Path("src/sudoku_ocr/weights/digit_classifier.pt")
-TARGET_PER_DIGIT = 2000
+TARGET_PER_DIGIT = 5000
 CANVAS_SIZE = 28
 INNER_SIZE = 20
 
@@ -234,12 +233,12 @@ def generate_printed_digits() -> None:
             img = render_digit(
                 digit,
                 font_path=random.choice(fonts),
-                font_size=random.randint(40, 65),
-                rotation=random.uniform(-10, 10),
-                scale=random.uniform(0.85, 1.15),
-                thickness=random.choice([0, 0, 0, 1, 1, 2]),
-                blur_radius=random.choice([0, 0, 0, 0.5, 0.8]),
-                noise_prob=random.choice([0, 0, 0, 0, 0.005, 0.01]),
+                font_size=random.randint(35, 70),
+                rotation=random.uniform(-15, 15),
+                scale=random.uniform(0.80, 1.20),
+                thickness=random.choice([0, 0, 0, 1, 1, 2, 2, 3]),
+                blur_radius=random.choice([0, 0, 0, 0.5, 0.8, 1.2]),
+                noise_prob=random.choice([0, 0, 0, 0.005, 0.01, 0.02]),
             )
             if img.sum() < 200:
                 continue
@@ -292,29 +291,21 @@ def train() -> None:
     num_workers = 4 if use_cuda else 0
     print(f"[train] batch_size={batch_size}, num_workers={num_workers}, epochs={EPOCHS}")
 
-    # MNIST uses ToTensor which gives (1, 28, 28) float32 in [0, 1]
-    # target_transform ensures labels are tensors (matching TensorDataset)
-    mnist_transform = transforms.Compose([transforms.ToTensor()])
-    target_transform = lambda y: torch.tensor(y, dtype=torch.long)
-
     # --- Datasets ---
-    mnist_train = datasets.MNIST(DATA_DIR, train=True, download=True,
-                                 transform=mnist_transform, target_transform=target_transform)
-    mnist_test = datasets.MNIST(DATA_DIR, train=False, download=True,
-                                transform=mnist_transform, target_transform=target_transform)
+    if not PRINTED_PT.exists():
+        print(f"[train] ERROR: {PRINTED_PT} not found — run generation first.")
+        return
 
-    printed_train = None
-    if PRINTED_PT.exists():
-        data = torch.load(PRINTED_PT, weights_only=True)
-        printed_train = TensorDataset(data["images"], data["labels"])
-        print(f"[train] Printed digits: {len(printed_train)} images")
+    data = torch.load(PRINTED_PT, weights_only=True)
+    n = len(data["labels"])
 
-    if printed_train is not None:
-        train_data = ConcatDataset([mnist_train, printed_train])
-    else:
-        train_data = mnist_train
-        print("[train] WARNING: No printed digits — MNIST only")
-    print(f"[train] Training samples: {len(train_data)}")
+    # Reproducible 90/10 train/val split
+    indices = torch.randperm(n, generator=torch.Generator().manual_seed(42))
+    split = int(n * 0.9)
+    train_idx, val_idx = indices[:split], indices[split:]
+    train_data = TensorDataset(data["images"][train_idx], data["labels"][train_idx])
+    val_data   = TensorDataset(data["images"][val_idx],   data["labels"][val_idx])
+    print(f"[train] Printed digits: {len(train_data)} train, {len(val_data)} val")
 
     loader_kwargs = dict(
         batch_size=batch_size,
@@ -323,8 +314,7 @@ def train() -> None:
         persistent_workers=num_workers > 0,
     )
     train_loader = DataLoader(train_data, shuffle=True, **loader_kwargs)
-    mnist_test_loader = DataLoader(mnist_test, **loader_kwargs)
-    printed_test_loader = DataLoader(printed_train, **loader_kwargs) if printed_train else None
+    val_loader   = DataLoader(val_data, **loader_kwargs)
 
     # --- Model + optimizer ---
     model = _SudokuNetCNN(num_classes=10).to(device)
@@ -340,6 +330,7 @@ def train() -> None:
 
     # --- Training loop ---
     t0 = time.time()
+    val_acc = 0.0
     for epoch in range(EPOCHS):
         model.train()
         total_loss = 0.0
@@ -365,27 +356,19 @@ def train() -> None:
 
         train_acc = correct / total
         avg_loss = total_loss / total
-        mnist_acc = evaluate(model, mnist_test_loader, device)
-
-        printed_str = ""
-        if printed_test_loader is not None:
-            printed_acc = evaluate(model, printed_test_loader, device)
-            printed_str = f" printed={printed_acc:.4f}"
-
+        val_acc = evaluate(model, val_loader, device)
         elapsed = time.time() - t0
         print(f"  Epoch {epoch + 1:2d}/{EPOCHS}: loss={avg_loss:.4f} "
-              f"train={train_acc:.4f} mnist={mnist_acc:.4f}{printed_str} "
+              f"train={train_acc:.4f} val={val_acc:.4f} "
               f"lr={optimizer.param_groups[0]['lr']:.1e} [{elapsed:.0f}s]")
 
-        scheduler.step(mnist_acc)
+        scheduler.step(val_acc)
 
     # --- Save ---
     WEIGHTS_PATH.parent.mkdir(parents=True, exist_ok=True)
     torch.save(model.state_dict(), WEIGHTS_PATH)
     print(f"\n[train] Saved to {WEIGHTS_PATH}")
-    print(f"[train] Final MNIST accuracy: {mnist_acc:.4f}")
-    if printed_test_loader is not None:
-        print(f"[train] Final printed accuracy: {printed_acc:.4f}")
+    print(f"[train] Final val accuracy: {val_acc:.4f}")
     print(f"[train] Total time: {time.time() - t0:.1f}s")
 
 
@@ -400,7 +383,7 @@ def main() -> None:
 
     print()
     print("=" * 60)
-    print("Step 2: Train on MNIST + printed digits")
+    print("Step 2: Train on printed digits")
     print("=" * 60)
     train()
 

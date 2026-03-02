@@ -13,8 +13,9 @@ RUN pip install --no-cache-dir -r requirements.txt \
 COPY src/ src/
 COPY samples/ samples/
 COPY scripts/ scripts/
+COPY tests/ tests/
 COPY pyproject.toml .
 
-RUN pip install --no-cache-dir -e .
+RUN pip install --no-cache-dir -e ".[dev]"
 
 CMD ["python", "scripts/test_pipeline.py"]

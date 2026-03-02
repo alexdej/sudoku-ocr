@@ -21,4 +21,6 @@ dependencies = [
 dev = [
     "pytest",
     "ruff",
+    "jupyterlab",
+    "matplotlib",
 ]

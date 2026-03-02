@@ -8,7 +8,7 @@ The pipeline has three stages:
 
 1. **Grid detection** — Finds the puzzle boundary using adaptive thresholding and contour detection (with Hough line fallback), then applies a perspective transform to produce a clean top-down view.
 2. **Cell segmentation** — Divides the warped grid into cells, extracts digit regions using Otsu thresholding and border clearing, and filters noise by contour area.
-3. **Digit classification** — A small CNN trained on MNIST classifies each extracted digit. Images are centered and padded to match MNIST format before inference.
+3. **Digit classification** — A small CNN trained on synthetic printed digits classifies each extracted digit. Images are cropped, centered, and binarized to a 28×28 canvas before inference.
 
 ## Installation
 
@@ -77,13 +77,18 @@ digits = reader.read_digits("puzzle_6x6.png", grid_size=6)
 
 ## Training
 
-To retrain the digit classifier on MNIST:
-
 ```bash
-python scripts/train.py
+# GPU (recommended) — builds a Docker image with CUDA PyTorch
+docker build -f Dockerfile.train -t sudoku-ocr-train .
+docker run --rm --gpus all \
+  -v ./data:/app/data \
+  -v ./src/sudoku_ocr/weights:/app/src/sudoku_ocr/weights \
+  sudoku-ocr-train
 ```
 
-Weights are saved to `src/sudoku_ocr/weights/digit_classifier.pt`.
+Generates synthetic printed digits, trains the CNN, and saves weights to
+`src/sudoku_ocr/weights/digit_classifier.pt`. Delete `data/printed_digits.pt`
+to force regeneration of training data.
 
 ## Project structure
 

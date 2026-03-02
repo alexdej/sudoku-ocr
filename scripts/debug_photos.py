@@ -15,7 +15,7 @@ from sudoku_ocr.grid import (
     _count_lines,
 )
 
-SAMPLES_DIR = Path("samples")
+SAMPLES_DIR = Path("samples/photos")
 OUTPUT_DIR = Path("output")
 
 PROBLEM_PHOTOS = [

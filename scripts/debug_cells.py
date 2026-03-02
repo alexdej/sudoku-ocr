@@ -9,7 +9,7 @@ from skimage.segmentation import clear_border
 from sudoku_ocr.grid import detect_grid
 
 
-SAMPLES_DIR = Path("samples")
+SAMPLES_DIR = Path("samples/screenshots")
 # Focus on the over-detecting images
 TARGETS = ["rules0-1.png", "sudoku1-max-en.gif", "sudokuexample.png"]
 

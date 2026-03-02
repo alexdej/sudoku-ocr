@@ -21,3 +21,4 @@ class CellInfo:
     grayscale_image: np.ndarray | None = None
     digit: int | None = None
     has_digit: bool = False
+    is_given: bool | None = None

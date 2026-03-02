@@ -24,10 +24,12 @@ def _prepare_cell_image(digit_image: np.ndarray) -> torch.Tensor:
     Returns:
         Float tensor of shape (1, 1, 28, 28) ready for inference.
     """
-    # Light morphological cleanup — close small gaps, remove specks
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-    cleaned = cv2.morphologyEx(digit_image, cv2.MORPH_CLOSE, kernel)
-    cleaned = cv2.morphologyEx(cleaned, cv2.MORPH_OPEN, kernel)
+    # Light morphological cleanup — close small gaps, remove single-pixel specks.
+    # Keep kernels small: a 3x3 open erodes thin strokes (e.g. top of a 7) away.
+    kernel_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    kernel_open  = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
+    cleaned = cv2.morphologyEx(digit_image, cv2.MORPH_CLOSE, kernel_close)
+    cleaned = cv2.morphologyEx(cleaned, cv2.MORPH_OPEN, kernel_open)
 
     # Crop to bounding box of the digit
     coords = cv2.findNonZero(cleaned)
@@ -45,6 +47,7 @@ def _prepare_cell_image(digit_image: np.ndarray) -> torch.Tensor:
     new_w = max(1, int(w * scale))
     new_h = max(1, int(h * scale))
     resized = cv2.resize(cropped, (new_w, new_h), interpolation=cv2.INTER_AREA)
+    resized = np.where(resized > 127, 255, 0).astype(np.uint8)
 
     # Center in 28x28 canvas
     canvas = np.zeros((MODEL_INPUT_SIZE, MODEL_INPUT_SIZE), dtype=np.uint8)

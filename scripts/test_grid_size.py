@@ -7,7 +7,7 @@ import cv2
 from sudoku_ocr.grid import detect_grid, detect_grid_size
 
 
-SAMPLES_DIR = Path("samples")
+SAMPLES_DIR = Path("samples/screenshots")
 
 
 def main() -> None:

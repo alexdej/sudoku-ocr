@@ -10,7 +10,7 @@ from sudoku_ocr.grid import detect_grid
 
 
 def main() -> None:
-    img = cv2.imread("samples/hq720.jpg")
+    img = cv2.imread("samples/screenshots/hq720.jpg")
     color_warped, gray_warped = detect_grid(img)
 
     h, w = gray_warped.shape[:2]
