@@ -14,13 +14,16 @@ from sudoku_ocr import PuzzleReader
 
 
 SAMPLES_DIR  = Path(__file__).parent.parent / "samples"
-WEIGHTS_DIR  = Path(__file__).parent.parent / "src" / "sudoku_ocr" / "weights"
+
+import sudoku_ocr as _pkg
+WEIGHTS_DIR  = Path(_pkg.__file__).parent / "weights"
+del _pkg
 
 
 # NOTE: verify these expected values before treating failures as regressions.
 # '.' = empty cell, digits = OCR prediction.
 SCREENSHOTS: dict[str, str] = {
-    "16x16.png":                                 "..2A..D3...6F.....G.74EF..........6....5.2...1C41....A6.93G....72....C..3.6...9....GF23...4DC.6...9B..G42F7.A.51...DB.1..C...F82CGE...5..9.21...BD.F.1CE48..59...1.249...5DCE....6...F.8..3....BD....572.19....FF9C...4.5....G..........D6C3.2.....1G...FA..34..", # uses 1-9+A-G convention; C/G confusion expected (visually similar)
+    "16x16.png":                                 "..2A..D3...6F.....G.74EF..........6....5.2...1C41....A6.93G....72....C..3.6...9....GF23...4DC.6...9B..G42F7.A.51...DB.1..C...F82CGE...5..9.21...BD.F.1CE48..59...1.249...5DCE....6...F.8..3....BD....572.19....FF9C...4.5....G..........D6C3.2.....1G...FA..34..", # uses 1-9+A-G convention
     "4363.png":                                  ".7..5..6.4..9.3..1..8...3...5.....4.1.......9.2.....1...4...7..9..1.7..6.8..3..5.",
     "4x4.png":                                   "...4....2..34.12",
     "6x6.png":                                   "62.5.3......5...3..6..2....3463.6...",
@@ -67,17 +70,15 @@ HANDWRITTEN: dict[str, str] = {
     "vohuwbzehwhb1.jpg":                                            ".34.4159.547925168.1256....6.417.9.327.63948114.28.6767618522..42.1168.7.5....216", # missed some of the handwritten digits
 }
 
-
 @pytest.fixture(scope="module")
 def reader() -> PuzzleReader:
     return PuzzleReader.from_weights_dir(WEIGHTS_DIR)
 
 
-@pytest.mark.parametrize("filename,expected", SCREENSHOTS.items())
-def test_screenshot(reader: PuzzleReader, filename: str, expected: str) -> None:
-    path = SAMPLES_DIR / "screenshots" / filename
+def do_test_sample(reader: PuzzleReader, filename: str, expected: str, subdir: str) -> None:
+    path = SAMPLES_DIR / subdir / filename
     if not path.exists():
-        pytest.skip(f"{filename} not found in samples/screenshots/")
+        pytest.skip(f"{filename} not found in samples/{subdir}/")
     result = reader.read_digits_string(path)
     assert result == expected, (
         f"\n  file    : {filename}"
@@ -85,28 +86,14 @@ def test_screenshot(reader: PuzzleReader, filename: str, expected: str) -> None:
         f"\n  expected: {expected}"
     )
 
+@pytest.mark.parametrize("filename", SCREENSHOTS.keys())
+def test_screenshot(reader: PuzzleReader, filename: str) -> None:
+    do_test_sample(reader, filename, SCREENSHOTS[filename], "screenshots")
 
-@pytest.mark.parametrize("filename,expected", PHOTOS.items())
-def test_photo(reader: PuzzleReader, filename: str, expected: str) -> None:
-    path = SAMPLES_DIR / "photos" / filename
-    if not path.exists():
-        pytest.skip(f"{filename} not found in samples/photos/")
-    result = reader.read_digits_string(path)
-    assert result == expected, (
-        f"\n  file    : {filename}"
-        f"\n  got     : {result}"
-        f"\n  expected: {expected}"
-    )
+@pytest.mark.parametrize("filename", PHOTOS.keys())
+def test_photo(reader: PuzzleReader, filename: str) -> None:
+    do_test_sample(reader, filename, PHOTOS[filename], "photos")
 
-
-@pytest.mark.parametrize("filename,expected", HANDWRITTEN.items())
-def test_handwritten(reader: PuzzleReader, filename: str, expected: str) -> None:
-    path = SAMPLES_DIR / "handwritten" / filename
-    if not path.exists():
-        pytest.skip(f"{filename} not found in samples/handwritten/")
-    result = reader.read_digits_string(path)
-    assert result == expected, (
-        f"\n  file    : {filename}"
-        f"\n  got     : {result}"
-        f"\n  expected: {expected}"
-    )
+@pytest.mark.parametrize("filename", HANDWRITTEN.keys())
+def test_handwritten(reader: PuzzleReader, filename: str) -> None:
+    do_test_sample(reader, filename, HANDWRITTEN[filename], "handwritten")

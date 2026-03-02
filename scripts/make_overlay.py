@@ -4,7 +4,8 @@ from pathlib import Path
 
 import cv2
 
-from sudoku_ocr import PuzzleReader, draw_overlay
+from sudoku_ocr import PuzzleReader
+from sudoku_ocr.viz import draw_overlay
 from sudoku_ocr.model import SudokuNet
 
 

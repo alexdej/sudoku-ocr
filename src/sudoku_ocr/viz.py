@@ -15,6 +15,7 @@ def draw_overlay(
     color_warped: np.ndarray,
     cells: list[CellInfo],
     grid_size: int | None = None,
+    chars: str | None = None,
 ) -> np.ndarray:
     """Draw detected digits and grid lines over the warped puzzle image.
 
@@ -63,7 +64,7 @@ def draw_overlay(
         cx = (x1 + x2) // 2
         cy = (y1 + y2) // 2
 
-        label = str(cell.digit)
+        label = chars[cell.digit] if chars is not None else str(cell.digit)
         font_scale = avg_cell_h / 50.0
         thickness = max(1, int(font_scale * 2))
 

@@ -28,10 +28,8 @@ pip install -e . --extra-index-url https://download.pytorch.org/whl/cpu
 
 ```python
 from sudoku_ocr import PuzzleReader
-from sudoku_ocr.model import SudokuNet
 
-model = SudokuNet("src/sudoku_ocr/weights/digit_classifier.pt")
-reader = PuzzleReader(model=model)
+reader = PuzzleReader.from_weights_dir("src/sudoku_ocr/weights")
 
 digits = reader.read_digits("puzzle.png")
 # [None, None, 2, None, 3, None, None, None, None,
@@ -49,23 +47,16 @@ color_warped, cells = reader.read_cells("puzzle.png")
 
 for cell in cells:
     print(f"({cell.row},{cell.col}): {cell.digit}")
-    # cell.color_image   — BGR crop of the cell (for color analysis)
-    # cell.has_digit      — whether a digit was detected
+    # cell.color_image  — BGR crop of the cell (for color analysis)
+    # cell.has_digit    — whether a digit was detected
+    # cell.is_given     — True = printed given, False = user fill, None = unknown
 ```
 
-### Visualization — overlay results on the image
+### Compact string representation
 
 ```python
-from sudoku_ocr import PuzzleReader, draw_overlay
-from sudoku_ocr.model import SudokuNet
-import cv2
-
-model = SudokuNet("src/sudoku_ocr/weights/digit_classifier.pt")
-reader = PuzzleReader(model=model)
-
-color_warped, cells = reader.read_cells("puzzle.png")
-overlay = draw_overlay(color_warped, cells)
-cv2.imwrite("overlay.png", overlay)
+s = reader.read_digits_string("puzzle.png")
+# "..2.3......4...697..745...1..."  ('.' = empty cell)
 ```
 
 ### Different grid sizes
@@ -75,7 +66,21 @@ cv2.imwrite("overlay.png", overlay)
 digits = reader.read_digits("puzzle_6x6.png", grid_size=6)
 ```
 
+## Testing
+
+```bash
+docker build -f Dockerfile.test -t sudoku-ocr-test .
+docker run --rm sudoku-ocr-test
+```
+
+Runs the full sample test suite (screenshots, photos, handwritten) against the
+bundled model weights. Pass pytest flags as extra arguments, e.g.
+`docker run --rm sudoku-ocr-test pytest tests/ -k screenshot -v`.
+
 ## Training
+
+Model weights are included in the repo so retraining is not required for normal use.
+To retrain (e.g. after changing the architecture or training data):
 
 ```bash
 # GPU (recommended) — builds a Docker image with CUDA PyTorch
@@ -86,9 +91,9 @@ docker run --rm --gpus all \
   sudoku-ocr-train
 ```
 
-Generates synthetic printed digits, trains the CNN, and saves weights to
-`src/sudoku_ocr/weights/digit_classifier.pt`. Delete `data/printed_digits.pt`
-to force regeneration of training data.
+Generates synthetic printed digits, trains three model variants, and writes
+weights to `src/sudoku_ocr/weights/`. Delete `data/printed_digits.pt` to force
+regeneration of training data.
 
 ## Project structure
 

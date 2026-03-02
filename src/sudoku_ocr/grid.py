@@ -246,6 +246,33 @@ def detect_grid_size(gray_warped: np.ndarray) -> int:
 _MIN_IMAGE_DIM = 300
 
 
+def _preprocess_for_detection(
+    image: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Upscale, grayscale, blur, and threshold a BGR image for grid detection.
+
+    Args:
+        image: Input image in BGR format.
+
+    Returns:
+        (scaled_bgr, gray, thresh_inv) where scaled_bgr is possibly upscaled,
+        gray is its grayscale, and thresh_inv is the inverted adaptive threshold
+        (white foreground on black background, ready for contour/Hough detection).
+    """
+    h, w = image.shape[:2]
+    if min(h, w) < _MIN_IMAGE_DIM:
+        scale = _MIN_IMAGE_DIM / min(h, w)
+        image = cv2.resize(image, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_CUBIC)
+
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    blurred = cv2.GaussianBlur(gray, (7, 7), 3)
+    thresh = cv2.adaptiveThreshold(
+        blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2,
+    )
+    thresh_inv = cv2.bitwise_not(thresh)
+    return image, gray, thresh_inv
+
+
 def detect_grid(image: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Detect the sudoku grid and return perspective-corrected images.
 
@@ -259,22 +286,12 @@ def detect_grid(image: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     Raises:
         ValueError: If no grid could be detected in the image.
     """
-    h, w = image.shape[:2]
-    if min(h, w) < _MIN_IMAGE_DIM:
-        scale = _MIN_IMAGE_DIM / min(h, w)
-        image = cv2.resize(image, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_CUBIC)
-
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    blurred = cv2.GaussianBlur(gray, (7, 7), 3)
-    thresh = cv2.adaptiveThreshold(
-        blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2,
-    )
-    thresh = cv2.bitwise_not(thresh)
+    image, gray, thresh_inv = _preprocess_for_detection(image)
 
     # Try contour detection first, fall back to Hough lines
-    corners = _find_grid_contour(thresh)
+    corners = _find_grid_contour(thresh_inv)
     if corners is None:
-        corners = _find_grid_hough(thresh)
+        corners = _find_grid_hough(thresh_inv)
         if corners is not None and not _is_reasonable_grid(corners, image.shape):
             corners = None
     if corners is None:
