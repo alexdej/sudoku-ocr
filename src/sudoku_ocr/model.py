@@ -97,6 +97,7 @@ class SudokuNet:
         self._device = torch.device("cpu")
         self._model = _SudokuNetCNN()
         self._model.eval()
+        self.chars: str = "0123456789"  # default; overridden on load
         if weights_path is not None:
             self.load(weights_path)
 
@@ -104,12 +105,15 @@ class SudokuNet:
         """Load trained model weights."""
         data = torch.load(weights_path, map_location=self._device, weights_only=True)
         if isinstance(data, dict) and "state_dict" in data:
-            # New format: {"state_dict": ..., "num_classes": N}
-            self._model = _SudokuNetCNN(num_classes=data.get("num_classes", 10))
+            # New format: {"state_dict": ..., "num_classes": N, "chars": "..."}
+            num_classes = data.get("num_classes", 10)
+            self._model = _SudokuNetCNN(num_classes=num_classes)
             self._model.load_state_dict(data["state_dict"])
+            self.chars = data.get("chars", "0123456789"[:num_classes])
         else:
             # Legacy format: raw state dict (10 classes)
             self._model.load_state_dict(data)
+            self.chars = "0123456789"
         self._model.eval()
 
     def predict(self, digit_image: np.ndarray) -> int:
@@ -119,7 +123,7 @@ class SudokuNet:
             digit_image: Binary image of an extracted digit.
 
         Returns:
-            Predicted digit (0-9).
+            Label index (0-based within self.chars).
         """
         tensor = _prepare_cell_image(digit_image).to(self._device)
         with torch.no_grad():

@@ -17,7 +17,14 @@ from .types import CellInfo
 
 ImageSource = Union[str, os.PathLike, Image.Image]
 
-_DIGIT_CHARS = "0123456789ABCDEF"  # label index → display character
+# Threshold: grids larger than this use the hex model (1-9+A-F) instead of
+# the standard model (1-9).
+_HEX_GRID_THRESHOLD = 9
+
+# Default model file names inside the weights directory.
+_MODEL_STANDARD = "digits_1_9.pt"
+_MODEL_HEX      = "digits_hex.pt"
+_MODEL_LEGACY   = "digit_classifier.pt"  # fallback for older installs
 
 
 def _load_image(source: ImageSource) -> np.ndarray:
@@ -36,8 +43,59 @@ def _load_image(source: ImageSource) -> np.ndarray:
 class PuzzleReader:
     """Extracts digits from a sudoku puzzle image."""
 
-    def __init__(self, model: SudokuNet | None = None) -> None:
+    def __init__(
+        self,
+        model: SudokuNet | None = None,
+        model_hex: SudokuNet | None = None,
+    ) -> None:
+        """Create a PuzzleReader.
+
+        Args:
+            model: Model for standard grids (≤9×9).  Used for all grids if
+                   model_hex is None.
+            model_hex: Model for large/hex grids (>9×9, e.g. 16×16).
+                       Falls back to model when None.
+        """
         self._model = model
+        self._model_hex = model_hex
+
+    @classmethod
+    def from_weights_dir(cls, weights_dir: str | Path) -> "PuzzleReader":
+        """Create a PuzzleReader by loading models from a weights directory.
+
+        Looks for (in order of preference):
+          - digits_1_9.pt  → standard model (1-9)
+          - digits_hex.pt  → hex model (1-9+A-F)
+          - digit_classifier.pt  → legacy fallback (used for both)
+
+        Args:
+            weights_dir: Directory containing .pt weight files.
+
+        Returns:
+            A PuzzleReader with models loaded from the directory.
+        """
+        d = Path(weights_dir)
+
+        def _try_load(name: str) -> SudokuNet | None:
+            p = d / name
+            if p.exists():
+                return SudokuNet(p)
+            return None
+
+        model     = _try_load(_MODEL_STANDARD) or _try_load(_MODEL_LEGACY)
+        model_hex = _try_load(_MODEL_HEX)
+
+        # If only a legacy file exists, use it for both
+        if model is None and model_hex is not None:
+            model = model_hex
+
+        return cls(model=model, model_hex=model_hex)
+
+    def _get_model(self, grid_size: int) -> SudokuNet | None:
+        """Return the appropriate model for the given grid size."""
+        if grid_size > _HEX_GRID_THRESHOLD and self._model_hex is not None:
+            return self._model_hex
+        return self._model
 
     def read_cells(
         self, image: ImageSource, grid_size: int | None = None,
@@ -65,10 +123,11 @@ class PuzzleReader:
 
         cells = segment_cells(color_warped, gray_warped, grid_size)
 
-        if self._model is not None:
+        active_model = self._get_model(grid_size)
+        if active_model is not None:
             for cell in cells:
                 if cell.has_digit and cell.grayscale_image is not None:
-                    cell.digit = self._model.predict(cell.grayscale_image)
+                    cell.digit = active_model.predict(cell.grayscale_image)
 
         return color_warped, cells
 
@@ -85,8 +144,11 @@ class PuzzleReader:
             A string of length grid_size² with digits and '.' for empty cells.
             E.g. "83.469.5.549.876.3..."
         """
-        digits = self.read_digits(image, grid_size)
-        return "".join(_DIGIT_CHARS[d] if d is not None else "." for d in digits)
+        _, cells = self.read_cells(image, grid_size)
+        gs = int(len(cells) ** 0.5)
+        active_model = self._get_model(gs)
+        chars = active_model.chars if active_model is not None else "0123456789"
+        return "".join(chars[cell.digit] if cell.digit is not None else "." for cell in cells)
 
     def read_digits(
         self, image: ImageSource, grid_size: int | None = None,
@@ -99,7 +161,7 @@ class PuzzleReader:
 
         Returns:
             A flat list of values in row-major order.
-            Each value is a digit (1-9) or None for empty cells.
+            Each value is a label index (into the active model's chars) or None.
         """
         _, cells = self.read_cells(image, grid_size)
         return [cell.digit for cell in cells]

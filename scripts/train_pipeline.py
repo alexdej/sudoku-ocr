@@ -1,7 +1,7 @@
-"""Generate synthetic printed digits + train SudokuNet on printed data only.
+"""Generate synthetic printed digits + train SudokuNet variants.
 
-Combines digit generation and training in one script. Optimized for GPU
-with mixed precision, parallel data loading, and larger batches.
+Generates training data for all chars once, then trains each variant
+by filtering/remapping labels to the variant's charset.
 
 === HOW TO RUN ===
 
@@ -16,9 +16,9 @@ Build the GPU training image:
   docker build -f Dockerfile.train -t sudoku-ocr-train .
 
 Run with GPU access:
-  docker run --rm --gpus all \
-    -v ./data:/app/data \
-    -v ./src/sudoku_ocr/weights:/app/src/sudoku_ocr/weights \
+  MSYS_NO_PATHCONV=1 docker run --rm --gpus all \\
+    -v "$(pwd)/data":/app/data \\
+    -v "$(pwd)/src/sudoku_ocr/weights":/app/src/sudoku_ocr/weights \\
     sudoku-ocr-train
 
 --- Option 2: Local with CUDA PyTorch ---
@@ -32,14 +32,19 @@ Then run directly:
 --- Option 3: Docker CPU-only (current Dockerfile, slow) ---
 
   docker build -t sudoku-ocr .
-  docker run --rm \
-    -v ./data:/app/data \
-    -v ./src/sudoku_ocr/weights:/app/src/sudoku_ocr/weights \
+  MSYS_NO_PATHCONV=1 docker run --rm \\
+    -v "$(pwd)/data":/app/data \\
+    -v "$(pwd)/src/sudoku_ocr/weights":/app/src/sudoku_ocr/weights \\
     sudoku-ocr python scripts/train_pipeline.py
 
 === EXPECTED PERFORMANCE ===
-  RTX 4080 (CUDA):  ~2-3 min total (generate + train)
-  CPU (Docker):     ~15-20 min total
+  RTX 4080 (CUDA):  ~4-6 min total (generate + train all variants)
+  CPU (Docker):     ~45-60 min total
+
+=== OUTPUT ===
+  src/sudoku_ocr/weights/digits_1_9.pt   — 9 classes (1-9),        for standard 9×9 grids
+  src/sudoku_ocr/weights/digits_hex.pt   — 15 classes (1-9+A-F),   for 16×16 hex grids
+  src/sudoku_ocr/weights/digits_0_9.pt   — 10 classes (0-9),       optional extended set
 """
 
 from __future__ import annotations
@@ -67,12 +72,22 @@ LR = 1e-3
 DATA_DIR = Path("data")
 PRINTED_PT = DATA_DIR / "printed_digits.pt"
 PREVIEW_DIR = DATA_DIR / "printed_digits_preview"
-WEIGHTS_PATH = Path("src/sudoku_ocr/weights/digit_classifier.pt")
+WEIGHTS_DIR = Path("src/sudoku_ocr/weights")
 TARGET_PER_DIGIT = 5000
 CANVAS_SIZE = 28
 INNER_SIZE = 20
-NUM_CLASSES = 16                    # 0-9 plus A-F for 16x16 grids
-CHARS = "0123456789ABCDEF"          # label index → display character
+
+# All characters we generate training data for.
+# Variants below select subsets of these.
+ALL_CHARS = "0123456789ABCDEFG"
+
+# Variants to train.  Key = output filename stem, value = charset string.
+# Label index i maps to CHARS[i] in the saved weights file.
+VARIANTS: dict[str, str] = {
+    "digits_1_9":  "123456789",            # standard sudoku (no 0, no hex)
+    "digits_hex":  "123456789ABCDEFG",     # 16×16 hex grids (1-9 + A-G, 16 classes)
+    "digits_0_9":  "0123456789",           # full decimal (optional)
+}
 
 # ---------------------------------------------------------------------------
 # Font discovery
@@ -119,7 +134,7 @@ def find_fonts() -> list[Path]:
 # Digit rendering
 # ---------------------------------------------------------------------------
 def render_digit(
-    digit: int, font_path: Path, font_size: int,
+    char: str, font_path: Path, font_size: int,
     rotation: float, scale: float, thickness: int,
     blur_radius: float, noise_prob: float,
 ) -> np.ndarray:
@@ -132,12 +147,11 @@ def render_digit(
     except (OSError, IOError):
         font = ImageFont.load_default()
 
-    text = CHARS[digit]
-    bbox = draw.textbbox((0, 0), text, font=font)
+    bbox = draw.textbbox((0, 0), char, font=font)
     tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
     tx = (render_size - tw) / 2 - bbox[0]
     ty = (render_size - th) / 2 - bbox[1]
-    draw.text((tx, ty), text, fill=255, font=font)
+    draw.text((tx, ty), char, fill=255, font=font)
 
     if abs(rotation) > 0.5:
         img = img.rotate(rotation, resample=Image.BICUBIC, expand=False, fillcolor=0)
@@ -191,8 +205,8 @@ def render_digit(
     return canvas
 
 
-def save_preview(images: list[np.ndarray], digit: int) -> None:
-    """Save a grid preview of all generated images for one digit."""
+def save_preview(images: list[np.ndarray], char: str) -> None:
+    """Save a grid preview of all generated images for one character."""
     n = len(images)
     cols = math.isqrt(n)
     rows = math.ceil(n / cols)
@@ -202,23 +216,25 @@ def save_preview(images: list[np.ndarray], digit: int) -> None:
         grid[r * CANVAS_SIZE:(r + 1) * CANVAS_SIZE,
              c * CANVAS_SIZE:(c + 1) * CANVAS_SIZE] = img
     PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
-    Image.fromarray(grid).save(PREVIEW_DIR / f"{digit}.png")
+    Image.fromarray(grid).save(PREVIEW_DIR / f"{char}.png")
 
 
 # ---------------------------------------------------------------------------
 # Step 1: Generate printed digits → single .pt file + preview PNGs
 # ---------------------------------------------------------------------------
 def generate_printed_digits() -> None:
+    num_classes = len(ALL_CHARS)
+
     if PRINTED_PT.exists():
         data = torch.load(PRINTED_PT, weights_only=True)
-        existing_classes = data.get("num_classes", 10)
-        if existing_classes == NUM_CLASSES:
+        existing_chars = data.get("chars", "")
+        if existing_chars == ALL_CHARS:
             print(f"[generate] {PRINTED_PT} already exists "
-                  f"({data['images'].shape[0]} images, {NUM_CLASSES} classes), skipping.")
+                  f"({data['images'].shape[0]} images, chars={ALL_CHARS!r}), skipping.")
             print(f"[generate] Delete {PRINTED_PT} to regenerate.")
             return
-        print(f"[generate] {PRINTED_PT} has {existing_classes} classes but need "
-              f"{NUM_CLASSES} — regenerating.")
+        print(f"[generate] {PRINTED_PT} has chars={existing_chars!r} but need "
+              f"{ALL_CHARS!r} — regenerating.")
 
     fonts = find_fonts()
     if not fonts:
@@ -226,7 +242,7 @@ def generate_printed_digits() -> None:
         return
 
     print(f"[generate] Found {len(fonts)} fonts, generating {TARGET_PER_DIGIT} images/class "
-          f"× {NUM_CLASSES} classes ({CHARS})...")
+          f"× {num_classes} classes ({ALL_CHARS})...")
     random.seed(42)
     np.random.seed(42)
 
@@ -234,11 +250,11 @@ def generate_printed_digits() -> None:
     all_labels: list[int] = []
 
     t0 = time.time()
-    for digit in range(NUM_CLASSES):
-        digit_images: list[np.ndarray] = []
-        while len(digit_images) < TARGET_PER_DIGIT:
+    for idx, char in enumerate(ALL_CHARS):
+        char_images: list[np.ndarray] = []
+        while len(char_images) < TARGET_PER_DIGIT:
             img = render_digit(
-                digit,
+                char,
                 font_path=random.choice(fonts),
                 font_size=random.randint(35, 70),
                 rotation=random.uniform(-15, 15),
@@ -249,11 +265,11 @@ def generate_printed_digits() -> None:
             )
             if img.sum() < 200:
                 continue
-            digit_images.append(img)
+            char_images.append(img)
 
-        save_preview(digit_images, CHARS[digit])
-        all_images.extend(digit_images)
-        all_labels.extend([digit] * len(digit_images))
+        save_preview(char_images, char)
+        all_images.extend(char_images)
+        all_labels.extend([idx] * len(char_images))
 
     # Save as single .pt: float32 tensors normalized to [0, 1]
     images_t = torch.from_numpy(np.array(all_images)).float() / 255.0  # (N, 28, 28)
@@ -261,14 +277,14 @@ def generate_printed_digits() -> None:
     labels_t = torch.tensor(all_labels, dtype=torch.long)
 
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    torch.save({"images": images_t, "labels": labels_t, "num_classes": NUM_CLASSES}, PRINTED_PT)
+    torch.save({"images": images_t, "labels": labels_t, "chars": ALL_CHARS}, PRINTED_PT)
     print(f"[generate] Done: {len(all_labels)} images in {time.time() - t0:.1f}s")
     print(f"[generate] Saved to {PRINTED_PT} ({PRINTED_PT.stat().st_size / 1024 / 1024:.1f}MB)")
     print(f"[generate] Previews in {PREVIEW_DIR}/")
 
 
 # ---------------------------------------------------------------------------
-# Step 2: Train
+# Step 2: Train one variant
 # ---------------------------------------------------------------------------
 def evaluate(model: nn.Module, loader: DataLoader, device: torch.device) -> float:
     model.eval()
@@ -282,60 +298,73 @@ def evaluate(model: nn.Module, loader: DataLoader, device: torch.device) -> floa
     return correct / total if total > 0 else 0.0
 
 
-def train() -> None:
-    # --- Device setup ---
-    use_cuda = torch.cuda.is_available()
-    device = torch.device("cuda" if use_cuda else "cpu")
-    if use_cuda:
-        torch.backends.cudnn.benchmark = True
-        props = torch.cuda.get_device_properties(0)
-        vram = getattr(props, 'total_memory', 0) or getattr(props, 'total_mem', 0)
-        print(f"[train] CUDA: {torch.cuda.get_device_name(0)} ({vram / 1024**3:.0f}GB)")
-    else:
-        print("[train] WARNING: No CUDA — training on CPU (will be slow)")
+def train_variant(
+    name: str,
+    chars: str,
+    all_images: torch.Tensor,
+    all_labels: torch.Tensor,
+    all_chars: str,
+    device: torch.device,
+    batch_size: int,
+    num_workers: int,
+    use_amp: bool,
+) -> None:
+    """Train and save a single model variant.
 
-    batch_size = BATCH_SIZE_GPU if use_cuda else BATCH_SIZE_CPU
-    num_workers = 4 if use_cuda else 0
-    print(f"[train] batch_size={batch_size}, num_workers={num_workers}, epochs={EPOCHS}")
+    Args:
+        name: Output filename stem (e.g. "digits_1_9").
+        chars: The charset for this variant (e.g. "123456789").
+        all_images: Full image tensor from the generated dataset (indexed by all_chars).
+        all_labels: Full label tensor (indices into all_chars).
+        all_chars: The full charset used during generation (ALL_CHARS).
+        device: Torch device to train on.
+        batch_size: Mini-batch size.
+        num_workers: DataLoader workers.
+        use_amp: Whether to use mixed-precision training.
+    """
+    print(f"\n[train:{name}] chars={chars!r} ({len(chars)} classes)")
 
-    # --- Datasets ---
-    if not PRINTED_PT.exists():
-        print(f"[train] ERROR: {PRINTED_PT} not found — run generation first.")
-        return
+    # Build index mapping: all_chars label → variant label (or -1 to exclude)
+    all_to_variant = {i: chars.index(c) for i, c in enumerate(all_chars) if c in chars}
 
-    data = torch.load(PRINTED_PT, weights_only=True)
-    n = len(data["labels"])
+    # Filter images/labels to this variant's charset, remap labels
+    keep_mask = torch.tensor(
+        [i.item() in all_to_variant for i in all_labels], dtype=torch.bool
+    )
+    images = all_images[keep_mask]
+    raw_labels = all_labels[keep_mask]
+    labels = torch.tensor(
+        [all_to_variant[l.item()] for l in raw_labels], dtype=torch.long
+    )
+
+    n = len(labels)
+    print(f"[train:{name}] {n} images ({n // len(chars)} avg/class)")
 
     # Reproducible 90/10 train/val split
     indices = torch.randperm(n, generator=torch.Generator().manual_seed(42))
     split = int(n * 0.9)
     train_idx, val_idx = indices[:split], indices[split:]
-    train_data = TensorDataset(data["images"][train_idx], data["labels"][train_idx])
-    val_data   = TensorDataset(data["images"][val_idx],   data["labels"][val_idx])
-    print(f"[train] Printed digits: {len(train_data)} train, {len(val_data)} val")
+    train_data = TensorDataset(images[train_idx], labels[train_idx])
+    val_data   = TensorDataset(images[val_idx],   labels[val_idx])
+    print(f"[train:{name}] {len(train_data)} train, {len(val_data)} val")
 
     loader_kwargs = dict(
         batch_size=batch_size,
-        pin_memory=use_cuda,
+        pin_memory=(device.type == "cuda"),
         num_workers=num_workers,
         persistent_workers=num_workers > 0,
     )
     train_loader = DataLoader(train_data, shuffle=True, **loader_kwargs)
     val_loader   = DataLoader(val_data, **loader_kwargs)
 
-    # --- Model + optimizer ---
-    model = _SudokuNetCNN(num_classes=NUM_CLASSES).to(device)
+    model = _SudokuNetCNN(num_classes=len(chars)).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=LR)
     criterion = nn.CrossEntropyLoss()
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode="max", factor=0.5, patience=2,
     )
-
-    # Mixed precision: float16 forward/backward, float32 weight updates
-    use_amp = use_cuda
     scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
 
-    # --- Training loop ---
     t0 = time.time()
     val_acc = 0.0
     for epoch in range(EPOCHS):
@@ -343,23 +372,23 @@ def train() -> None:
         total_loss = 0.0
         correct = total = 0
 
-        for images, labels in train_loader:
-            images = images.to(device, non_blocking=True)
-            labels = labels.to(device, non_blocking=True)
+        for imgs, lbls in train_loader:
+            imgs = imgs.to(device, non_blocking=True)
+            lbls = lbls.to(device, non_blocking=True)
 
             optimizer.zero_grad(set_to_none=True)
 
             with torch.amp.autocast("cuda", enabled=use_amp):
-                output = model(images)
-                loss = criterion(output, labels)
+                output = model(imgs)
+                loss = criterion(output, lbls)
 
             scaler.scale(loss).backward()
             scaler.step(optimizer)
             scaler.update()
 
-            total_loss += loss.item() * images.size(0)
-            correct += (output.argmax(1) == labels).sum().item()
-            total += images.size(0)
+            total_loss += loss.item() * imgs.size(0)
+            correct += (output.argmax(1) == lbls).sum().item()
+            total += imgs.size(0)
 
         train_acc = correct / total
         avg_loss = total_loss / total
@@ -371,12 +400,64 @@ def train() -> None:
 
         scheduler.step(val_acc)
 
-    # --- Save ---
-    WEIGHTS_PATH.parent.mkdir(parents=True, exist_ok=True)
-    torch.save({"state_dict": model.state_dict(), "num_classes": NUM_CLASSES}, WEIGHTS_PATH)
-    print(f"\n[train] Saved to {WEIGHTS_PATH}")
-    print(f"[train] Final val accuracy: {val_acc:.4f}")
-    print(f"[train] Total time: {time.time() - t0:.1f}s")
+    WEIGHTS_DIR.mkdir(parents=True, exist_ok=True)
+    out_path = WEIGHTS_DIR / f"{name}.pt"
+    torch.save({"state_dict": model.state_dict(), "num_classes": len(chars), "chars": chars}, out_path)
+    size_kb = out_path.stat().st_size / 1024
+    print(f"[train:{name}] Saved to {out_path} ({size_kb:.0f}KB), val={val_acc:.4f}, "
+          f"time={time.time() - t0:.1f}s")
+
+
+# ---------------------------------------------------------------------------
+# Step 2 (outer): Train all variants
+# ---------------------------------------------------------------------------
+def train_all(variants: dict[str, str]) -> None:
+    # --- Device setup ---
+    use_cuda = torch.cuda.is_available()
+    device = torch.device("cuda" if use_cuda else "cpu")
+    if use_cuda:
+        torch.backends.cudnn.benchmark = True
+        props = torch.cuda.get_device_properties(0)
+        vram = getattr(props, 'total_memory', 0) or getattr(props, 'total_mem', 0)
+        print(f"[train] CUDA: {torch.cuda.get_device_name(0)} ({vram / 1024**3:.0f}GB)")
+    else:
+        print("[train] WARNING: No CUDA — training on CPU (will be slow)")
+
+    use_amp = use_cuda
+    batch_size = BATCH_SIZE_GPU if use_cuda else BATCH_SIZE_CPU
+    num_workers = 4 if use_cuda else 0
+    print(f"[train] batch_size={batch_size}, num_workers={num_workers}, epochs={EPOCHS}")
+
+    # --- Load dataset once ---
+    if not PRINTED_PT.exists():
+        print(f"[train] ERROR: {PRINTED_PT} not found — run generation first.")
+        return
+
+    data = torch.load(PRINTED_PT, weights_only=True)
+    all_images: torch.Tensor = data["images"]
+    all_labels: torch.Tensor = data["labels"]
+    all_chars: str = data.get("chars", ALL_CHARS)
+    print(f"[train] Loaded {len(all_labels)} images, chars={all_chars!r}")
+
+    # --- Train each variant ---
+    for name, chars in variants.items():
+        train_variant(
+            name=name,
+            chars=chars,
+            all_images=all_images,
+            all_labels=all_labels,
+            all_chars=all_chars,
+            device=device,
+            batch_size=batch_size,
+            num_workers=num_workers,
+            use_amp=use_amp,
+        )
+
+    print(f"\n[train] All variants saved to {WEIGHTS_DIR}/")
+    for name in variants:
+        p = WEIGHTS_DIR / f"{name}.pt"
+        if p.exists():
+            print(f"  {p.name:30s}  {p.stat().st_size / 1024:.0f}KB")
 
 
 # ---------------------------------------------------------------------------
@@ -390,9 +471,11 @@ def main() -> None:
 
     print()
     print("=" * 60)
-    print("Step 2: Train on printed digits")
+    print("Step 2: Train variants")
+    for name, chars in VARIANTS.items():
+        print(f"  {name}: {chars!r} ({len(chars)} classes)")
     print("=" * 60)
-    train()
+    train_all(VARIANTS)
 
 
 if __name__ == "__main__":
