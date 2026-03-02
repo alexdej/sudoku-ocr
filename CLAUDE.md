@@ -59,6 +59,13 @@ These have been carefully tuned — don't change them without a concrete reason:
 | `CELL_PADDING_RATIO` | 0.08 | Trim 8% from cell edges before extraction. Reducing this globally causes grid-line bleed |
 | `MIN_CELL_SIZE` | 50 | Upscale cells below this pixel size |
 
-## Git Preferences
+## Version Control
 
+This repo uses **Jujutsu (jj)** colocated with Git.
+
+- Do NOT use `git add` / `git commit` — jj tracks the working copy automatically
+- Use `jj describe` to set the description on the current commit
+- Use `jj new` to start a new commit on top of the current one
+- Use `jj squash` to fold a small fixup into the parent commit
+- Use `jj git push` to push to GitHub
 - Do NOT include `Co-Authored-By` lines in commit messages

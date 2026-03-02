@@ -17,6 +17,8 @@ from .types import CellInfo
 
 ImageSource = Union[str, os.PathLike, Image.Image]
 
+_DIGIT_CHARS = "0123456789ABCDEF"  # label index → display character
+
 
 def _load_image(source: ImageSource) -> np.ndarray:
     """Load an image source into a BGR numpy array for OpenCV."""
@@ -84,7 +86,7 @@ class PuzzleReader:
             E.g. "83.469.5.549.876.3..."
         """
         digits = self.read_digits(image, grid_size)
-        return "".join(str(d) if d is not None else "." for d in digits)
+        return "".join(_DIGIT_CHARS[d] if d is not None else "." for d in digits)
 
     def read_digits(
         self, image: ImageSource, grid_size: int | None = None,

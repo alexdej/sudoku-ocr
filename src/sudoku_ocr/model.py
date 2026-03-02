@@ -102,8 +102,14 @@ class SudokuNet:
 
     def load(self, weights_path: str | Path) -> None:
         """Load trained model weights."""
-        state = torch.load(weights_path, map_location=self._device, weights_only=True)
-        self._model.load_state_dict(state)
+        data = torch.load(weights_path, map_location=self._device, weights_only=True)
+        if isinstance(data, dict) and "state_dict" in data:
+            # New format: {"state_dict": ..., "num_classes": N}
+            self._model = _SudokuNetCNN(num_classes=data.get("num_classes", 10))
+            self._model.load_state_dict(data["state_dict"])
+        else:
+            # Legacy format: raw state dict (10 classes)
+            self._model.load_state_dict(data)
         self._model.eval()
 
     def predict(self, digit_image: np.ndarray) -> int:

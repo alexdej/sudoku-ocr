@@ -71,6 +71,8 @@ WEIGHTS_PATH = Path("src/sudoku_ocr/weights/digit_classifier.pt")
 TARGET_PER_DIGIT = 5000
 CANVAS_SIZE = 28
 INNER_SIZE = 20
+NUM_CLASSES = 16                    # 0-9 plus A-F for 16x16 grids
+CHARS = "0123456789ABCDEF"          # label index → display character
 
 # ---------------------------------------------------------------------------
 # Font discovery
@@ -130,7 +132,7 @@ def render_digit(
     except (OSError, IOError):
         font = ImageFont.load_default()
 
-    text = str(digit)
+    text = CHARS[digit]
     bbox = draw.textbbox((0, 0), text, font=font)
     tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
     tx = (render_size - tw) / 2 - bbox[0]
@@ -209,17 +211,22 @@ def save_preview(images: list[np.ndarray], digit: int) -> None:
 def generate_printed_digits() -> None:
     if PRINTED_PT.exists():
         data = torch.load(PRINTED_PT, weights_only=True)
-        print(f"[generate] {PRINTED_PT} already exists "
-              f"({data['images'].shape[0]} images), skipping.")
-        print(f"[generate] Delete {PRINTED_PT} to regenerate.")
-        return
+        existing_classes = data.get("num_classes", 10)
+        if existing_classes == NUM_CLASSES:
+            print(f"[generate] {PRINTED_PT} already exists "
+                  f"({data['images'].shape[0]} images, {NUM_CLASSES} classes), skipping.")
+            print(f"[generate] Delete {PRINTED_PT} to regenerate.")
+            return
+        print(f"[generate] {PRINTED_PT} has {existing_classes} classes but need "
+              f"{NUM_CLASSES} — regenerating.")
 
     fonts = find_fonts()
     if not fonts:
         print("[generate] ERROR: No fonts found!")
         return
 
-    print(f"[generate] Found {len(fonts)} fonts, generating {TARGET_PER_DIGIT} images/digit...")
+    print(f"[generate] Found {len(fonts)} fonts, generating {TARGET_PER_DIGIT} images/class "
+          f"× {NUM_CLASSES} classes ({CHARS})...")
     random.seed(42)
     np.random.seed(42)
 
@@ -227,7 +234,7 @@ def generate_printed_digits() -> None:
     all_labels: list[int] = []
 
     t0 = time.time()
-    for digit in range(0, 10):
+    for digit in range(NUM_CLASSES):
         digit_images: list[np.ndarray] = []
         while len(digit_images) < TARGET_PER_DIGIT:
             img = render_digit(
@@ -244,7 +251,7 @@ def generate_printed_digits() -> None:
                 continue
             digit_images.append(img)
 
-        save_preview(digit_images, digit)
+        save_preview(digit_images, CHARS[digit])
         all_images.extend(digit_images)
         all_labels.extend([digit] * len(digit_images))
 
@@ -254,7 +261,7 @@ def generate_printed_digits() -> None:
     labels_t = torch.tensor(all_labels, dtype=torch.long)
 
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    torch.save({"images": images_t, "labels": labels_t}, PRINTED_PT)
+    torch.save({"images": images_t, "labels": labels_t, "num_classes": NUM_CLASSES}, PRINTED_PT)
     print(f"[generate] Done: {len(all_labels)} images in {time.time() - t0:.1f}s")
     print(f"[generate] Saved to {PRINTED_PT} ({PRINTED_PT.stat().st_size / 1024 / 1024:.1f}MB)")
     print(f"[generate] Previews in {PREVIEW_DIR}/")
@@ -317,7 +324,7 @@ def train() -> None:
     val_loader   = DataLoader(val_data, **loader_kwargs)
 
     # --- Model + optimizer ---
-    model = _SudokuNetCNN(num_classes=10).to(device)
+    model = _SudokuNetCNN(num_classes=NUM_CLASSES).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=LR)
     criterion = nn.CrossEntropyLoss()
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
@@ -366,7 +373,7 @@ def train() -> None:
 
     # --- Save ---
     WEIGHTS_PATH.parent.mkdir(parents=True, exist_ok=True)
-    torch.save(model.state_dict(), WEIGHTS_PATH)
+    torch.save({"state_dict": model.state_dict(), "num_classes": NUM_CLASSES}, WEIGHTS_PATH)
     print(f"\n[train] Saved to {WEIGHTS_PATH}")
     print(f"[train] Final val accuracy: {val_acc:.4f}")
     print(f"[train] Total time: {time.time() - t0:.1f}s")
