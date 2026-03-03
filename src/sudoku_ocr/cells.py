@@ -64,12 +64,42 @@ def _extract_digit_region(cell_gray: np.ndarray) -> np.ndarray | None:
     source = _clear_border(thresh)
 
     contours, _ = cv2.findContours(source, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    cell_area = cell_gray.shape[0] * cell_gray.shape[1]
 
-    if not contours:
-        # clear_border eliminated everything — likely a border-touching digit (common in
-        # photos where large printed strokes reach the padded cell edge, e.g. the top bar
-        # of a "7").  Fall back to the uncleared threshold, filtering only thin elongated
-        # border artifacts (grid-line remnants) rather than all border-touching pixels.
+    _thresh_px = cv2.countNonZero(thresh)
+    _largest_cleared_area = (
+        cv2.contourArea(max(contours, key=cv2.contourArea)) if contours else 0.0
+    )
+    _source_px = cv2.countNonZero(source)
+
+    # Detect: a border-touching printed digit was almost entirely swallowed by
+    # clear_border, leaving only a microscopic non-degenerate smudge.  Three
+    # guards together select only the target case (e.g. a bold "6" whose
+    # strokes reach all four padded-cell edges in a high-res photo):
+    #   cleared_area ≥ 1    skip zero-area degenerate (collinear) contours
+    #   source_px ≤ 6       only a handful of foreground pixels survive
+    #   survived < 0.6 %    the cleared content is negligible vs. the uncleared
+    #                        digit mass (rules out small cells where thresh_px
+    #                        is also modest, so survived fraction is higher)
+    #   0.25 ≤ tc ≤ 0.35    printed digit territory: too low = noise,
+    #                        too high = heavy pencil fills or full-cell marks
+    _tc = _thresh_px / cell_area if cell_area > 0 else 0.0
+    _is_tiny_speck = (
+        bool(contours)
+        and _largest_cleared_area >= 1.0
+        and _source_px <= 6
+        and _thresh_px > 0
+        and _source_px / _thresh_px < 0.006
+        and 0.25 <= _tc <= 0.35
+    )
+
+    if not contours or _is_tiny_speck:
+        # clear_border eliminated the digit or left only a tiny speck — likely a
+        # border-touching digit (common in photos where large printed strokes reach
+        # the padded cell edge, e.g. the top bar of a "7" or the full stroke of a
+        # large "6").  Fall back to the uncleared threshold, filtering only thin
+        # elongated border artifacts (grid-line remnants) rather than all
+        # border-touching pixels.
         source = thresh
         h_img, w_img = thresh.shape
         raw, _ = cv2.findContours(source, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -94,7 +124,6 @@ def _extract_digit_region(cell_gray: np.ndarray) -> np.ndarray | None:
             return None
 
     largest = max(contours, key=cv2.contourArea)
-    cell_area = cell_gray.shape[0] * cell_gray.shape[1]
     if cv2.contourArea(largest) / cell_area < MIN_DIGIT_AREA_RATIO:
         return None
 
