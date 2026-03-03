@@ -1,11 +1,15 @@
 # Sudoku OCR — Project Instructions
 
+## Roadmap
+
+Use `ROADMAP.md` to track status, plans and make notes about work in progress. Keep this file up to date as work progresses.
+
 ## Running Tests
 
-Always run tests in Docker (no local Python env):
+Always run tests in Docker (don't assume an available local Python env):
 
 ```bash
-# Build image (required after any code or sample change; weights are bundled in the wheel)
+# Build image (always required after any code or sample change; weights are bundled in the wheel)
 docker build -f Dockerfile.test -t sudoku-ocr-test .
 
 # Run full test suite

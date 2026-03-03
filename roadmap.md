@@ -1,5 +1,16 @@
 # Roadmap
 
+## Testing
+
+- **Pillow-free core suite**: Convert WEBP/GIF samples to PNG/JPG so they can
+  run without Pillow. Keep the originals as a separate format-compatibility
+  layer. The `requires_pillow` tests would then only verify that the Pillow
+  fallback loads files correctly — not full OCR accuracy — keeping that suite
+  minimal.
+
+- **CI without Pillow**: Add a test run that omits Pillow (`-m "not
+  requires_pillow"`) to confirm it is truly optional for the core use case.
+
 ## Current state
 
 - Grid detection (contour + Hough line fallback), perspective correction

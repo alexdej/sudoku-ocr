@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "sudoku-ocr"
 version = "0.1.0"
-description = "Best-in-class OCR for sudoku puzzle images"
+description = "OCR for sudoku puzzle images"
 requires-python = ">=3.10"
 license = "MIT"
 dependencies = [
