@@ -1,7 +1,7 @@
 # CPU-only test image for sudoku-ocr.
 #
 # Installs a built wheel (not an editable dev install) and contains only
-# tests/ and samples/ — no source tree.  Model weights are bundled inside
+# tests/ (including tests/testdata/images/) — no source tree.  Model weights are bundled inside
 # the wheel (see pyproject.toml [tool.hatch.build.targets.wheel] artifacts).
 #
 # Build:
@@ -48,7 +48,7 @@ RUN pip install --no-cache-dir /tmp/*.whl
 RUN pip install --no-cache-dir Pillow pytest
 
 # Test inputs only — no source tree in this image.
+# tests/testdata/images/ contains all sample images (flat, no subdirs).
 COPY tests/ tests/
-COPY samples/ samples/
 
 CMD ["pytest", "tests/", "-v"]

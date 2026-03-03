@@ -18,7 +18,7 @@ from pathlib import Path
 import sudoku_ocr as _pkg
 from sudoku_ocr import PuzzleReader
 
-SAMPLES_DIR  = Path(__file__).parent.parent / "samples" / "screenshots"
+SAMPLES_DIR  = Path(__file__).parent / "testdata" / "images"
 WEIGHTS_DIR  = Path(_pkg.__file__).parent / "weights"
 del _pkg
 
@@ -58,7 +58,7 @@ def reader() -> PuzzleReader:
 def test_given_fill(reader: PuzzleReader, filename: str, expected: str) -> None:
     path = SAMPLES_DIR / filename
     if not path.exists():
-        pytest.skip(f"{filename} not found in samples/screenshots/")
+        pytest.skip(f"{filename} not found in tests/testdata/images/")
     result = _given_fill_string(reader, path)
     assert result == expected, (
         f"\n  file    : {filename}"

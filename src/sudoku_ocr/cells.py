@@ -27,23 +27,48 @@ CELL_PADDING_RATIO = 0.08
 MIN_CELL_SIZE = 50
 
 
-def _clear_border(img: np.ndarray) -> np.ndarray:
-    """Zero out any foreground pixels whose connected component touches the border.
+def _clear_border(img: np.ndarray, min_depth: float = 0.50) -> np.ndarray:
+    """Zero out shallow border-touching components (grid-line remnants, edge noise).
 
-    Uses 8-connectivity, matching the behaviour of skimage.segmentation.clear_border.
+    A component is removed only if its perpendicular reach from every border it
+    touches is below min_depth (fraction of image dimension).  Components that
+    extend deeply into the cell interior — digit strokes that happen to reach an
+    edge — are left intact.
+
+    Examples:
+      • Thin horizontal strip at top (touches top/left/right):
+          depth_from_top = bottom/h ≈ 6%  →  min = 6%  →  REMOVE ✓
+      • Tall "1" touching only the top:
+          depth_from_top = bottom/h ≈ 89%  →  min = 89%  →  KEEP ✓
+      • Large "6" touching all 4 borders:
+          all depths ≈ 100%  →  min ≈ 100%  →  KEEP ✓
     """
-    n_labels, labels = cv2.connectedComponents(img, connectivity=8)
+    n_labels, labels, stats, _ = cv2.connectedComponentsWithStats(img, connectivity=8)
     h, w = img.shape
-    border_labels: set[int] = set()
-    border_labels.update(int(v) for v in labels[0, :])
-    border_labels.update(int(v) for v in labels[h - 1, :])
-    border_labels.update(int(v) for v in labels[:, 0])
-    border_labels.update(int(v) for v in labels[:, w - 1])
-    border_labels.discard(0)  # 0 is background
-    if not border_labels:
-        return img.copy()
     cleared = img.copy()
-    for label in border_labels:
+    for label in range(1, n_labels):
+        left   = int(stats[label, cv2.CC_STAT_LEFT])
+        top    = int(stats[label, cv2.CC_STAT_TOP])
+        right  = left + int(stats[label, cv2.CC_STAT_WIDTH])  - 1
+        bottom = top  + int(stats[label, cv2.CC_STAT_HEIGHT]) - 1
+
+        touches_top    = top == 0
+        touches_bottom = bottom == h - 1
+        touches_left   = left == 0
+        touches_right  = right == w - 1
+
+        if not (touches_top or touches_bottom or touches_left or touches_right):
+            continue  # fully interior — always keep
+
+        depths: list[float] = []
+        if touches_top:    depths.append(bottom / h)
+        if touches_bottom: depths.append((h - 1 - top) / h)
+        if touches_left:   depths.append(right / w)
+        if touches_right:  depths.append((w - 1 - left) / w)
+
+        if min(depths) >= min_depth:
+            continue  # deep component — almost certainly a real digit stroke
+
         cleared[labels == label] = 0
     return cleared
 
@@ -66,40 +91,27 @@ def _extract_digit_region(cell_gray: np.ndarray) -> np.ndarray | None:
     contours, _ = cv2.findContours(source, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     cell_area = cell_gray.shape[0] * cell_gray.shape[1]
 
-    _thresh_px = cv2.countNonZero(thresh)
-    _largest_cleared_area = (
-        cv2.contourArea(max(contours, key=cv2.contourArea)) if contours else 0.0
-    )
-    _source_px = cv2.countNonZero(source)
+    # Remove oversized connected components (>60 % area) from the source image by
+    # zeroing their exact pixel set — NOT a polygon fill, which would also erase
+    # interior white islands enclosed by the digit strokes.
+    # On dark-background cells the entire background inverts to a single large white
+    # region; erasing it exposes the interior islands as exterior contours, the same
+    # way the old unconditional _clear_border did.
+    n_src_labels, src_labels = cv2.connectedComponents(source, connectivity=8)
+    large_removed = False
+    for lab in range(1, n_src_labels):
+        if np.sum(src_labels == lab) / cell_area > 0.60:
+            source = source.copy()
+            source[src_labels == lab] = 0
+            large_removed = True
+    if large_removed:
+        contours, _ = cv2.findContours(source, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-    # Detect: a border-touching printed digit was almost entirely swallowed by
-    # clear_border, leaving only a microscopic non-degenerate smudge.  Three
-    # guards together select only the target case (e.g. a bold "6" whose
-    # strokes reach all four padded-cell edges in a high-res photo):
-    #   cleared_area ≥ 1    skip zero-area degenerate (collinear) contours
-    #   source_px ≤ 6       only a handful of foreground pixels survive
-    #   survived < 0.6 %    the cleared content is negligible vs. the uncleared
-    #                        digit mass (rules out small cells where thresh_px
-    #                        is also modest, so survived fraction is higher)
-    #   0.25 ≤ tc ≤ 0.35    printed digit territory: too low = noise,
-    #                        too high = heavy pencil fills or full-cell marks
-    _tc = _thresh_px / cell_area if cell_area > 0 else 0.0
-    _is_tiny_speck = (
-        bool(contours)
-        and _largest_cleared_area >= 1.0
-        and _source_px <= 6
-        and _thresh_px > 0
-        and _source_px / _thresh_px < 0.006
-        and 0.25 <= _tc <= 0.35
-    )
-
-    if not contours or _is_tiny_speck:
-        # clear_border eliminated the digit or left only a tiny speck — likely a
-        # border-touching digit (common in photos where large printed strokes reach
-        # the padded cell edge, e.g. the top bar of a "7" or the full stroke of a
-        # large "6").  Fall back to the uncleared threshold, filtering only thin
-        # elongated border artifacts (grid-line remnants) rather than all
-        # border-touching pixels.
+    if not contours:
+        # _clear_border removed every component (all were shallow grid artifacts),
+        # or erasing the large background blob left nothing.  Fall back to the
+        # uncleared threshold, filtering only thin elongated border artifacts
+        # (grid-line remnants) rather than all border-touching pixels.
         source = thresh
         h_img, w_img = thresh.shape
         raw, _ = cv2.findContours(source, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)

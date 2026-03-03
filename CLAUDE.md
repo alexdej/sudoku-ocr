@@ -4,9 +4,27 @@
 
 Use `ROADMAP.md` to track status, plans and make notes about work in progress. Keep this file up to date as work progresses.
 
+## Local python environment
+
+- User is using conda to manage python environments. 
+- Assume claude was launched from the appropriate environment.
+- Do not install new dependencies without asking. All dependencies should already be installed.
+
 ## Running Tests
 
-Always run tests in Docker (don't assume an available local Python env):
+Tests can be run in the local conda environment or in Docker
+
+```bash
+# to run locally
+pytest tests/ -v
+
+# to run a specific subset
+pytest tests/ -v -k screenshot
+pytest tests/ -v -k photo
+pytest tests/ -v -k handwritten
+```
+
+Always do a full test run in docker before completing a task:
 
 ```bash
 # Build image (always required after any code or sample change; weights are bundled in the wheel)
@@ -16,13 +34,12 @@ docker build -f Dockerfile.test -t sudoku-ocr-test .
 docker run --rm sudoku-ocr-test
 
 # Run a specific test group
-docker run --rm sudoku-ocr-test pytest tests/ -v -k screenshot
-docker run --rm sudoku-ocr-test pytest tests/ -v -k photo
 docker run --rm sudoku-ocr-test pytest tests/ -v -k handwritten
 ```
 
 `Dockerfile.test` is CPU-only and builds a proper wheel (not an editable install).
 The `sudoku-ocr-train` image uses CUDA for training.
+
 
 ## Training
 
@@ -53,9 +70,7 @@ Model weights (`*.pt`) are tracked in git and bundled with the package. Training
 - `test_handwritten` — photos with handwritten digits (7 images, partial accuracy expected)
 
 Samples live in:
-- `samples/screenshots/`
-- `samples/photos/`
-- `samples/handwritten/`
+- `tests/testdata/images/` (flat, all images in one directory)
 
 Expected strings use `'.'` for empty cells. Standard 9×9 grids use `1-9`; 16×16 grids use `1-9` and `A-G`.
 
