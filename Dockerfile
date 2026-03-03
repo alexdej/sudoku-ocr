@@ -16,6 +16,6 @@ COPY scripts/ scripts/
 COPY tests/ tests/
 COPY pyproject.toml .
 
-RUN pip install --no-cache-dir -e ".[dev]"
+RUN pip install --no-cache-dir -e ".[formats,dev]"
 
 CMD ["python", "scripts/test_pipeline.py"]

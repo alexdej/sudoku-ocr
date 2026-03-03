@@ -15,12 +15,12 @@ To regenerate expected values after intentional changes:
 import pytest
 from pathlib import Path
 
+import sudoku_ocr as _pkg
 from sudoku_ocr import PuzzleReader
-from sudoku_ocr.model import SudokuNet
-
 
 SAMPLES_DIR  = Path(__file__).parent.parent / "samples" / "screenshots"
-WEIGHTS_PATH = Path(__file__).parent.parent / "src" / "sudoku_ocr" / "weights" / "digit_classifier.pt"
+WEIGHTS_DIR  = Path(_pkg.__file__).parent / "weights"
+del _pkg
 
 
 def _given_fill_string(reader: PuzzleReader, path: Path) -> str:
@@ -42,17 +42,16 @@ EXPECTED: dict[str, str] = {
     "sudoku-coach-highlighted.png":   "...G....G.G..F....FG.G.GG...GG..GF...GGG....F....G.GG...G.G..FG.F.G.G.G.G...F.G.G",
     "sudoku-coach-completed.png":     "GGGFFFFGFGFFGFFFFGGGGFFFFFGFGGFGGFGFFFGFGGGFGGGGFGGGGFFGGGFGGGFGGFFFGFGGGFGFGFFGF",
     # sudoku.com — givens are dark navy, fill digits are bright blue, wrong fill is red
-    "sudoku-com-in-progress.png":     ".G....GG.G..F.G..F...GG.GG..GGGGG.GG.GG.GGGGG.GG...G..G..GG...G.G.F..G..GG..G.F..",
-    "sudoku-com-wrong.png":           ".G....GG.G..F.G..F...GG.GG..GGGGG.GG.GG.GGGGG.GG...G..G..GG...G.G.FF.G..GG..G.F..",
+    "sudoku-com-in-progress.png":     ".G....GGGG..F.G..F...GG.GG..GGGGG.GG.GG.GGGGG.GG...G..G..GG...G.G.F..G..GG..GGF..",
+    "sudoku-com-wrong.png":           ".G....GGGG..F.G..F...GG.GG..GGGGG.GG.GG.GGGGG.GG...G..G..GG...G.G.FF.G..GG..GGF..",
     # unknown Android app — givens are black, fill digits are blue
-    "Sudoku_app-in-progress.png":     "....G...GG.FGF...GGFF...F..FGGGFGF..F..F.F...G...FGGGF.G......GGFG..G.F.G..GG....",
+    "Sudoku_app-in-progress.png":     "F...GG..GGFFGF.G.GGFF..GFG.FGGGFGFFGF.FFGF...G..GFGGGFFG.G....GGFG.FG.FGG..GG.F..",
 }
 
 
 @pytest.fixture(scope="module")
 def reader() -> PuzzleReader:
-    model = SudokuNet(WEIGHTS_PATH)
-    return PuzzleReader(model=model)
+    return PuzzleReader.from_weights_dir(WEIGHTS_DIR)
 
 
 @pytest.mark.parametrize("filename,expected", EXPECTED.items())

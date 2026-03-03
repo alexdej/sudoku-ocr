@@ -4,18 +4,26 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Union
+from typing import TYPE_CHECKING, Union
 
 import cv2
 import numpy as np
-from PIL import Image
 
 from .cells import segment_cells
 from .grid import detect_grid, detect_grid_size
 from .model import SudokuNet
 from .types import CellInfo
 
-ImageSource = Union[str, os.PathLike, Image.Image]
+if TYPE_CHECKING:
+    from PIL import Image as _PILImage
+
+# Union type for image inputs.  PIL.Image.Image is supported when Pillow is
+# installed; without it, only file paths are accepted.
+ImageSource = Union[str, os.PathLike, "Image.Image"]
+
+_PILLOW_INSTALL_HINT = (
+    "Install Pillow to load this image format: pip install Pillow"
+)
 
 # Threshold: grids larger than this use the hex model (1-9+A-F) instead of
 # the standard model (1-9).
@@ -31,12 +39,31 @@ def _load_image(source: ImageSource) -> np.ndarray:
     """Load an image source into a BGR numpy array for OpenCV."""
     if isinstance(source, (str, os.PathLike)):
         img = cv2.imread(str(source))
-        if img is None:
-            raise FileNotFoundError(f"Could not load image: {source}")
-        return img
-    if isinstance(source, Image.Image):
-        rgb = np.array(source.convert("RGB"))
+        if img is not None:
+            return img
+        # OpenCV can't decode this format (GIF, WEBP, JFIF, …) — try Pillow.
+        try:
+            from PIL import Image
+        except ImportError:
+            raise ImportError(
+                f"Could not load image: {source}\n{_PILLOW_INSTALL_HINT}"
+            ) from None
+        try:
+            pil_img = Image.open(source).convert("RGB")
+        except Exception as exc:
+            raise FileNotFoundError(f"Could not load image: {source}") from exc
+        rgb = np.array(pil_img)
         return cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+
+    # Accept a PIL Image object directly (requires Pillow at call time).
+    try:
+        from PIL import Image
+        if isinstance(source, Image.Image):
+            rgb = np.array(source.convert("RGB"))
+            return cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+    except ImportError:
+        pass
+
     raise TypeError(f"Unsupported image source type: {type(source)}")
 
 

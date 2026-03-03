@@ -35,16 +35,17 @@ WORKDIR /app
 # Install CPU PyTorch first so pip doesn't resolve the heavy CUDA wheel when
 # it later processes the package's torch dependency.
 RUN pip install --no-cache-dir \
-    torch torchvision \
+    torch \
     --extra-index-url https://download.pytorch.org/whl/cpu
 
-# Install the built wheel; remaining deps (numpy, opencv, Pillow, …) and the
-# bundled model weights come from the wheel.
+# Install the built wheel (includes numpy, opencv, torch) and model weights.
 COPY --from=builder /dist/*.whl /tmp/
 RUN pip install --no-cache-dir /tmp/*.whl
 
-# pytest is the only dev dependency needed here.
-RUN pip install --no-cache-dir pytest
+# Pillow is an optional runtime dep (for WEBP/GIF/JFIF support); test samples
+# include these formats so we install it explicitly here.
+# pytest is the only dev dependency needed.
+RUN pip install --no-cache-dir Pillow pytest
 
 # Test inputs only — no source tree in this image.
 COPY tests/ tests/

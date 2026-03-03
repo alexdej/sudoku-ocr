@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import cv2
 import numpy as np
-from skimage.segmentation import clear_border
 
 from .types import CellInfo
 
@@ -27,6 +26,27 @@ CELL_PADDING_RATIO = 0.08
 MIN_CELL_SIZE = 50
 
 
+def _clear_border(img: np.ndarray) -> np.ndarray:
+    """Zero out any foreground pixels whose connected component touches the border.
+
+    Uses 8-connectivity, matching the behaviour of skimage.segmentation.clear_border.
+    """
+    n_labels, labels = cv2.connectedComponents(img, connectivity=8)
+    h, w = img.shape
+    border_labels: set[int] = set()
+    border_labels.update(int(v) for v in labels[0, :])
+    border_labels.update(int(v) for v in labels[h - 1, :])
+    border_labels.update(int(v) for v in labels[:, 0])
+    border_labels.update(int(v) for v in labels[:, w - 1])
+    border_labels.discard(0)  # 0 is background
+    if not border_labels:
+        return img.copy()
+    cleared = img.copy()
+    for label in border_labels:
+        cleared[labels == label] = 0
+    return cleared
+
+
 def _extract_digit_region(cell_gray: np.ndarray) -> np.ndarray | None:
     """Extract the digit region from a single grayscale cell.
 
@@ -40,7 +60,7 @@ def _extract_digit_region(cell_gray: np.ndarray) -> np.ndarray | None:
     # filters by chance.
     if abs(float(cell_gray.mean()) - float(otsu_val)) < MIN_BIMODALITY:
         return None
-    source = clear_border(thresh)
+    source = _clear_border(thresh)
 
     contours, _ = cv2.findContours(source, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 

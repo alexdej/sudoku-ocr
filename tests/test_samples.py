@@ -12,6 +12,19 @@ from pathlib import Path
 
 from sudoku_ocr import PuzzleReader
 
+# File extensions that OpenCV can't load natively — Pillow required.
+_PILLOW_EXTS = {".webp", ".gif"}
+
+
+def _params(d: dict[str, str]) -> list:
+    """Build a parametrize list, tagging Pillow-only formats with a mark."""
+    return [
+        pytest.param(k, marks=pytest.mark.requires_pillow)
+        if Path(k).suffix.lower() in _PILLOW_EXTS
+        else k
+        for k in d
+    ]
+
 
 SAMPLES_DIR  = Path(__file__).parent.parent / "samples"
 
@@ -86,14 +99,14 @@ def do_test_sample(reader: PuzzleReader, filename: str, expected: str, subdir: s
         f"\n  expected: {expected}"
     )
 
-@pytest.mark.parametrize("filename", SCREENSHOTS.keys())
+@pytest.mark.parametrize("filename", _params(SCREENSHOTS))
 def test_screenshot(reader: PuzzleReader, filename: str) -> None:
     do_test_sample(reader, filename, SCREENSHOTS[filename], "screenshots")
 
-@pytest.mark.parametrize("filename", PHOTOS.keys())
+@pytest.mark.parametrize("filename", _params(PHOTOS))
 def test_photo(reader: PuzzleReader, filename: str) -> None:
     do_test_sample(reader, filename, PHOTOS[filename], "photos")
 
-@pytest.mark.parametrize("filename", HANDWRITTEN.keys())
+@pytest.mark.parametrize("filename", _params(HANDWRITTEN))
 def test_handwritten(reader: PuzzleReader, filename: str) -> None:
     do_test_sample(reader, filename, HANDWRITTEN[filename], "handwritten")

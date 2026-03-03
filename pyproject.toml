@@ -11,13 +11,16 @@ license = "MIT"
 dependencies = [
     "numpy",
     "opencv-python-headless",
-    "Pillow",
-    "scikit-image",
     "torch",
-    "torchvision",
+]
+
+[tool.pytest.ini_options]
+markers = [
+    "requires_pillow: test requires Pillow for image loading (pip install 'sudoku-ocr[formats]')",
 ]
 
 [project.optional-dependencies]
+formats = ["Pillow"]
 dev = [
     "pytest",
     "ruff",

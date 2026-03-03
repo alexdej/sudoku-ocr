@@ -33,9 +33,10 @@ RUN ln -sf /usr/bin/python3 /usr/bin/python
 WORKDIR /app
 
 COPY requirements.txt .
-# Install CUDA-enabled PyTorch (cu124 matches the base image CUDA version)
+# Install CUDA-enabled PyTorch + torchvision (training only; not a runtime dep)
 RUN pip install --no-cache-dir \
     -r requirements.txt \
+    torchvision \
     --extra-index-url https://download.pytorch.org/whl/cu124
 
 COPY src/ src/
