@@ -10,7 +10,7 @@ import cv2
 import numpy as np
 
 from .cells import segment_cells
-from .grid import detect_grid, detect_grid_size
+from .grid import detect_grid, detect_grid_size, refine_grid_warp
 from .model import SudokuNet
 from .types import CellInfo
 
@@ -147,6 +147,8 @@ class PuzzleReader:
 
         if grid_size is None:
             grid_size = detect_grid_size(gray_warped)
+
+        color_warped, gray_warped, _ = refine_grid_warp(color_warped, gray_warped, grid_size)
 
         cells = segment_cells(color_warped, gray_warped, grid_size)
 

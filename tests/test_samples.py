@@ -66,7 +66,7 @@ SCREENSHOTS: dict[str, str] = {
 PHOTOS: dict[str, str] = {
     "hsLhe.jpg":                                                    "...6.47..7.6.....9.....5.8..7..2..938.......543..1..7..5.2.....3.....2.8..23.1...",
     "6978422072_33ac92fe1a_b.jpg":                                  "8...1...9.5.8.7.1...4.9.7...6.7.1.2.5.8.6.1.7.1.5.2.9...7.4.6...8.3.9.4.3...5...8",
-    "EFJ5JjIXYAEvSse.jpg":                                         "7234915684685327195917862341769584239421638753852746912.43179866178493..8.962514.", # still missing a few digits in rows 7-9
+    "EFJ5JjIXYAEvSse.jpg":                                         "723491568468532719591786234176958423942163875385274691254317986617849352839625147", # contour mesh warp correctly deskews clipped bottom edge; all 81 digits read
     "IMG_6062.JPG":                                                 "....6...24...15......7...9....6..1.7.7.....8.3.6..9....5...8.....149...38...5....", # just missing one digit: a 6 in r2c7
     "images.jpg":                                                   ".391.....4.8.6...22..58.7..8.........2...9...3.6....49....1..3..4.3....87.....4..",
     "paper-16x16.jpg":                                              ".C1....6..F.7D.3.1..CDF..E..4......A.3...7D1F....1FF.A.......2..1..D...6.D7F93....8.3B...DC.16DFB.9..D...382..4C..C.F..56.4.D8...1E5.F.A7..D.C..67A.49E...1..F.D9F2B.C5.E.9AD7..C.B1726.F...E..A.27C......6...3....6D4C...21B......9..B..FAC....2.5D.B.FB.E4..C.", # uses 0-9+A-F convention; 0s misread since our hex model uses 1-9+A-G — TODO if 16x16 support matters
